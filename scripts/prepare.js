@@ -77,10 +77,21 @@ function classify(url, where) {
 const refRe = /(?:src|href)\s*=\s*["']([^"']+)["']/gi;
 let m;
 while ((m = refRe.exec(html))) classify(m[1], '标签属性');
-const urlRe = /url\(\s*["']?([^"')]+)["']?\s*\)/gi;
-while ((m = urlRe.exec(html))) classify(m[1], 'CSS url()');
-const impRe = /@import\s+(?:url\()?\s*["']([^"']+)["']/gi;
-while ((m = impRe.exec(html))) classify(m[1], 'CSS @import');
+
+// url() / @import 只扫 CSS 上下文（<style> 块与 style="..." 属性）。
+// 否则会误伤 JS——实测踩过：canvas 的 toDataURL('image/png') 被当成 CSS url(image/png)。
+const cssRegions = [];
+const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+while ((m = styleRe.exec(html))) cssRegions.push({ text: m[1], where: 'CSS <style>' });
+const inlineStyleRe = /\sstyle\s*=\s*"([^"]*)"|\sstyle\s*=\s*'([^']*)'/gi;
+while ((m = inlineStyleRe.exec(html))) cssRegions.push({ text: m[1] || m[2], where: 'style 属性' });
+
+for (const region of cssRegions) {
+  const urlRe = /url\(\s*["']?([^"')]+)["']?\s*\)/gi;
+  while ((m = urlRe.exec(region.text))) classify(m[1], region.where);
+  const impRe = /@import\s+(?:url\()?\s*["']([^"']+)["']/gi;
+  while ((m = impRe.exec(region.text))) classify(m[1], region.where);
+}
 
 if (/<base\s[^>]*href=/i.test(html)) {
   report.warnings.push('<base href> 存在——块内相对路径的解析基准不可靠。');
