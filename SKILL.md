@@ -67,14 +67,37 @@ node scripts/prepare.js <输入.html> --out-dir .h2l-build --split-at h2   # h1 
 
 拆完仍有块超限 → 换更靠上的层级（`h2` → `h1`）重试。
 
-## 原地更新（链接不变，同事刷新即新版）
+## 更新已有文档（链接不变，同事刷新即新版）
+
+顺序是 **先 pull → 再改 → 再上传**：
 
 ```bash
-node scripts/prepare.js <输入.html> --out-dir .h2l-build
+# 1 把文档里的块拉回本地（消化漂移，同时拿到最新内容）
+node scripts/pull.js <飞书文档URL> --out 拉回来的.html
+
+# 2 在「拉回来的.html」上改（或直接改你自己的源文件）
+
+# 3 推回去
+node scripts/prepare.js 拉回来的.html --out-dir .h2l-build
 node scripts/publish.js .h2l-build --doc <飞书文档URL>
 ```
 
-文档里有**多个** html5-block 时脚本会拒绝替换（不猜）—— 需先人工确认。
+### 为什么要先 pull
+
+块是本地 HTML 的**单向投影**。有人在飞书里直接改了块，那份改动**只存在于文档里**，
+直接更新会把它静默覆盖掉。
+
+`publish.js` 内置**漂移守卫**：更新前比对「文档里现在的块」与「上次由本工具推上去的」指纹。
+不一致 → **拒绝覆盖**，打印两个 sha 并给出 pull 命令。`--force` 可强行覆盖（确认那些改动不要了才用）。
+
+守卫的记忆按**文档 ID** 存在 `~/.html-to-lark/state.json`。`pull.js` 成功后会记下
+「已看过文档当前状态」，所以 **pull → 改 → 上传这条正常流程不会被自己的守卫挡住**。
+
+### 其他边界
+
+- 文档里有**多个** html5-block 时，更新与拉取都会**拒绝**（不猜是哪一个），需用 `--block-index N` 或人工确认。
+- 更新走 `block_replace`，**只替换那一个块** —— 文档里的标题、其他段落、原生内容都不动（实测验证）。
+  （对比：`docs +update --command overwrite` 会清空整篇文档，别用。）
 
 ## 出问题读哪
 
@@ -82,7 +105,7 @@ node scripts/publish.js .h2l-build --doc <飞书文档URL>
 |---|---|
 | 认证 / 登录态 / 缺 scope / 版本过低 | `lark-cli skills read lark-shared`（**本 skill 不重复官方配置流程**） |
 | html5-block 为什么会这样、实测证据 | [references/lark-html5-block.md](references/lark-html5-block.md) |
-| 脚本到底做了什么 | 直接读 `scripts/*.js` —— 三个文件、无依赖链、无隐藏步骤 |
+| 脚本到底做了什么 | 直接读 `scripts/*.js` —— 五个文件、无外部依赖、无隐藏步骤（`cli.js` 是共用的 CLI 调用层，`state.js` 是漂移指纹存储） |
 
 **依赖**：`lark-cli` ≥ **1.0.98**（html5-block 在此之前的文档里没有）、Node ≥ 10。
 **不做事前检查** —— 调用失败时报的错就是最好的提示，照着修即可。
