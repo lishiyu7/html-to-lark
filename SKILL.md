@@ -7,142 +7,88 @@ description: 把本地单文件 HTML 网页发布成飞书云文档——正文�
 
 本地 HTML → 飞书云文档，正文**整篇一个 HTML 块**。同事点链接就能看 —— 不需要域名、不需要 CI、不需要内网穿透。
 
-这就是它存在的唯一理由：**省掉「部署网站」这一步**。
-
-## 何时用 / 何时不用
-
-**用**：手上有份单文件 HTML（尤其是 `answer-me-with-html` 的产物），想让别人看到它本来的样子。
-**不用**：要把内容变成飞书原生排版（可搜索、可评论——那得重建内容，是另一件事）；要部署公网站点。
-
-## 前置
+## 三步
 
 ```bash
-lark-cli --version                                    # 需 ≥ 1.0.98（html5-block 在此之前未被内置文档收录）
-lark-cli docs +create --help | grep reference-map     # 有输出即版本 OK
-lark-cli auth login --domain docs --domain drive      # 未授权时
-```
-
-## 流程
-
-### 1 准备
-
-```bash
+# 1 准备（校验 / 内联本地图片 / 组装 XML）
 node scripts/prepare.js <输入.html> --out-dir .h2l-build
+
+# 2 先在本地看一眼（别跳）
+#    用浏览器打开 .h2l-build/block.html —— 内联图片后长什么样，只有打开才知道
+
+# 3 发布（发布 + 权限核查 + 回执，一步到位）
+node scripts/publish.js .h2l-build
 ```
 
-产出 `.h2l-build/doc.xml` + `block.html`，并打印报告。脚本承包机械部分：校验（含 500KB 硬上限）、剥旧版 chrome、**把本地图片内联成 `data:` URI**、扫描剩余引用、注入三条 meta、标题与 alt 的回落、组装 XML。
+**第 2 步为什么不能跳**：图片内联、样式继承这类问题，在飞书里才发现就要重发一遍。
+本地打开是零成本的最后一道检查。
 
-**本地图片会自动内联**（默认开）—— 因为块只是一段存进 `reference_map` 的文本，
-`./img/x.png` 在块内**一定加载不到**（实测），而 `data:` URI **实测可正常渲染**。
-走 `--no-inline-images` 可关掉，先发不含图的版本。
+**发布脚本会自动打印回执四项**：文档链接 / 分享范围 / 页宽提示 / 服务端提醒。
+把回执**原样转给用户**（页宽提示里那两句注意事项不能省，理由见下）。
 
-### 2 把报告讲给用户（**不要跳过**）
+### 报告要转述的
 
-报告里有两类信息必须转述，否则用户会拿到一份坏页面：
+`prepare.js` 的输出里有两类必须讲给用户，否则会拿到坏页面：
 
-- **内联结果**：内联了哪几张、各多大；**内联失败**的（文件缺失 / 非图片类型）要点名。
-- **其余本地引用**（`./app.js`、`./style.css` 这类）→ 脚本**不自动处理**，只内联图片。请用户手改。
-- **标题 / description 的回落提醒** → `description` 决定块的 `alt`，而 `alt` 是这个块唯一的索引面。
-
-> **体积红线**：base64 会让图片膨胀约 **1/3**，而 500KB 是平台硬上限。
-> 超限时脚本**硬失败**并给出按体积排序的清单，指明是哪几张图撑爆的 —— 让用户去压图或改外链。
-
-## 超限时：先问，再拆（**不要自动拆**）
-
-`500KB` 是**每个 HTML 块**的上限，**不是整篇文档的**上限（实测：同一文档放两块各 400KB，创建成功、两块都完整落库）。
-所以超限还有第二条路：**拆成多个 HTML 块**。
-
-但**绝不能自动拆** —— 拆块有真实代价，用户必须在知情下选择。脚本超限时的报错文案里已带这两条路，
-照做即可：**先把代价讲清楚，再问要不要拆**。
-
-### 要转述给用户的代价（原文照用）
-
-1. **每块都要重背一遍 `<head>` / CSS / JS** —— 省下的**远少于一半**。样式资产越大，越不划算。
-2. **跨块不共享状态** —— 受众开关这类交互会**每块各一套**，读者要切多次。
-3. **块与块之间在文档里是可见的分隔**，不再是一整页。
-
-### 用户同意后
-
-```bash
-node scripts/prepare.js <输入.html> --out-dir .h2l-build --split-at h2
-```
-
-`--split-at` 接受**标题标签名**（`h1` / `h2` / `h3`）。脚本会：
-
-- 在「该标签作为直接子元素」的那一层分组，并把**祖先包装元素**（如 `<main class="am-doc">`）
-  连同**前置兄弟节点**（如工具条）按原结构复制进每一块 —— 否则布局会塌；
-- 头部块过小时并入第一节，避免出现几乎空白的块；
-- 逐块校验仍 ≤ 500KB，**任何一块超限就整体失败**并告诉你换个更靠上的层级；
-- 产出 `block-1.html`…`block-N.html` 与含 N 个 `<html5-block>` 的 `doc.xml`。
-
-**换个层级重试**：拆完仍超限 → 用更靠上的标签（`h2` → `h1`）再拆。
-
-### 3 发布
-
-```bash
-cd .h2l-build
-lark-cli docs +create --doc-format xml --content "@./doc.xml" --parent-position my_library --as user
-```
-
-**不要写 `--reference-map`** —— CLI 会自动把 `path="@./block.html"` 展开进 `reference_map`（实测确认）。
-
-### 4 权限核查（默认只读，别多此一举）
-
-```bash
-lark-cli drive permission.public get --token <document_id> --type docx --as user
-```
-
-- `link_share_entity == "tenant_readable"` → 已是「组织内获得链接的人可阅读」，**到此为止**。（多数租户新建文档默认就是它。）
-- 否则才改，且 **必须先向用户确认** —— 该命令是 high-risk-write，CLI 明令 agent 不得自行加 `--yes`：
-
-```bash
-lark-cli drive permission.public patch --token <document_id> --type docx \
-  --data '{"link_share_entity":"tenant_readable"}' --as user --yes
-```
-
-### 5 回执（四项必须齐全）
-
-1. **文档链接**
-2. **权限现状**（原文回显，如「分享范围：组织内获得链接的人可阅读」）
-3. **页宽提示**（原文见下，**必须带那两句注意**）
-4. **警告清单**（本地引用、回落提醒等）
-
-## 更新已有文档
-
-```bash
-# 1) 先拿当前 block id —— block_replace 后旧 id 失效，每次都要重新 fetch
-lark-cli docs +fetch --doc <文档URL> --detail with-ids --as user
-# 2) 原地替换该 html5-block
-lark-cli docs +update --doc <文档URL> --command block_replace --block-id <id> \
-  --content '<html5-block path="@./block.html"></html5-block>' --as user
-```
-
-文档 URL 不变，同事刷新即新版。若文档里有**多个** html5-block，先问用户替换哪一个，不要自作主张。
+- **内联失败的图片**（文件缺失 / 不是图片类型）→ 块内一定加载不到。
+- **其余本地引用**（`./app.js`、`./style.css`）→ 脚本**只内联图片**，这些要用户自己改。
 
 ## 硬约束
 
-全部为**实测**结论，不是从文档抄的：
+| 约束 | 值 |
+|---|---|
+| HTML 总长 | **≤ 500KB / 每块**（不是整篇文档的上限） |
+| 文档可用宽度 | ≈ **820px**，所有读者一致，按此验收排版 |
+| 必须注入的 meta | `use-iframe` / `html-box-height-mode` / `description`（脚本已做） |
+| `description` → 块的 `alt` | `alt` 是这个块**唯一的索引面** |
+| 本地图片 | 自动内联为 `data:` URI；否则一定加载不到 |
+| 其余本地引用 | 一定加载不到，**不自动处理** |
+| 外部 URL | 可以加载；但读者网络不通该域名仍会失败 |
+| 高度模式 | 默认 `auto`；单屏类（deck / dashboard）用 `--height viewport` |
 
-| 约束 | 值 | 说明 |
-|---|---|---|
-| HTML 总长 | **≤ 500KB / 每块** | **每块**的上限，不是整篇文档的（实测：同文档两块各 400KB 成功）。超了默认硬失败 |
-| 文档可用宽度 | **≈ 820px** | **所有读者一致**。排版按这个宽度验收 |
-| 三条 meta | `use-iframe` / `html-box-height-mode` / `description` | 必须自己注入；CLI 原样写入、**不校验**，写错了不报错 |
-| `description` → 块的 `alt` | — | 实测坐实。alt 是这个块**唯一的索引面** |
-| 本地图片 | **自动内联为 `data:` URI** | 不内联就一定加载不到；`data:` URI 实测可渲染。base64 膨胀约 1/3 |
-| 其余本地引用（js/css） | 一定加载不到、**不自动处理** | 只内联图片；脚本/样式请用户手改，避免改动语义 |
-| 外部 URL | **可以加载** | 实测外部 JS/CSS/图片全通、页面无 CSP。但读者网络不通该域名仍会失败 |
-| 高度模式 | 默认 `auto` | 长页完整展开；单屏类（deck / dashboard）用 `--height viewport` |
+> 每条都有实测依据，证据与「为什么」见 [references/lark-html5-block.md](references/lark-html5-block.md)。
+> **本文件只留结论，不重复证据** —— 单一事实源。
 
-## 页宽提示（回执第 3 项，原文照用）
+## 超限时：先问，再拆（**不要自动拆**）
 
-> 💡 阅读更佳：打开文档右上角 **···** → **页宽设置** → 选**较宽**或**全宽**。
-> 注意：这个设置**只对你自己生效**，不影响别人看到的效果；转发时建议一并告诉同事。
+超过 500KB 时 `prepare.js` 会硬失败，并给出两条路。**先把代价讲清楚，再问用户要不要拆。**
 
-**为什么必须带第二句**：页宽是**每个读者本地的查看偏好**，不是文档属性。飞书帮助中心明载「仅对设置者生效，不会影响其他阅读者」，且「无法将全宽设为默认值」，官方 API 也没有这个字段。不写清楚，用户会以为设一次所有人都宽了。
+要转述的代价（原文照用）：
 
-（我们踩过这个坑：曾计划把「默认全宽」做进本 skill，核实后撤销 —— 原理上不可行，且非官方内部接口也只对设置者自己生效。）
+1. **每块都要重背一遍 `<head>` / CSS / JS** —— 省下的**远少于一半**。
+2. **跨块不共享状态** —— 受众开关这类交互会**每块各一套**，读者要切多次。
+3. **块与块之间在文档里是可见的分隔**，不再是一整页。
 
-## 参考
+用户同意后：
 
-- [references/lark-html5-block.md](references/lark-html5-block.md) — html5-block 的完整事实与实测记录。
+```bash
+node scripts/prepare.js <输入.html> --out-dir .h2l-build --split-at h2   # h1 / h2 / h3
+```
+
+拆完仍有块超限 → 换更靠上的层级（`h2` → `h1`）重试。
+
+## 原地更新（链接不变，同事刷新即新版）
+
+```bash
+node scripts/prepare.js <输入.html> --out-dir .h2l-build
+node scripts/publish.js .h2l-build --doc <飞书文档URL>
+```
+
+文档里有**多个** html5-block 时脚本会拒绝替换（不猜）—— 需先人工确认。
+
+## 出问题读哪
+
+| 症状 | 读这个 |
+|---|---|
+| 认证 / 登录态 / 缺 scope / 版本过低 | `lark-cli skills read lark-shared`（**本 skill 不重复官方配置流程**） |
+| html5-block 为什么会这样、实测证据 | [references/lark-html5-block.md](references/lark-html5-block.md) |
+| 脚本到底做了什么 | 直接读 `scripts/*.js` —— 三个文件、无依赖链、无隐藏步骤 |
+
+**依赖**：`lark-cli` ≥ **1.0.98**（html5-block 在此之前的文档里没有）、Node ≥ 10。
+**不做事前检查** —— 调用失败时报的错就是最好的提示，照着修即可。
+
+## 验证范围
+
+**Windows 11 + Git Bash + Node v22 + lark-cli 1.0.98** 实测通过。
+**macOS / Linux 未验证**：脚本只用 Node 标准库（理论可跑），但 `publish.js` 的 CLI 定位与
+安装方式（PowerShell junction）是 Windows 特有的，移植前请先测。
