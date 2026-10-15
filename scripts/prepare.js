@@ -20,8 +20,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const { splitIntoChunks } = require('./split-html');
 
-const LIMIT = 500 * 1024; // 官方硬上限：HTML 总长 500KB
+const LIMIT = 500 * 1024; // 官方硬上限：每个 HTML 块 500KB（实测：同文档两块各 400KB 可共存）
 
 // ── 参数 ────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -35,6 +36,8 @@ const height = opt('height', 'auto');
 const titleOverride = opt('title', '');
 const descOverride = opt('description', '');
 const inlineImages = !argv.includes('--no-inline-images');
+// 超限时的显式回退：按该标题标签拆成多块。不自动触发——拆块有代价，须先征得用户同意。
+const splitAt = opt('split-at', '');
 
 function die(msg) {
   console.error('✖ ' + msg);
@@ -58,10 +61,8 @@ const report = {
 };
 
 // ── 1. 初步校验 ─────────────────────────────────────────────────────────
-if (srcBytes > LIMIT) {
-  die('HTML 超过飞书硬上限：' + srcBytes + 'B > ' + LIMIT + 'B（500KB）。\n' +
-      '  这不是策略问题，是平台上限，写进去会失败。');
-}
+// 这里**不**对体积下结论：后续剥 chrome 会减小、内联图片会增大，
+// 只有全部加工完的最终体积才算数（见「最终体积校验」）。
 if (!/^\s*(<!doctype|<html)/i.test(html)) {
   report.warnings.push('文件不像完整 HTML（开头既不是 <!doctype 也不是 <html>）——块会原样存储，可能渲染异常。');
 }
@@ -214,28 +215,69 @@ if (metaLines.length) {
 
 // ── 6. 最终体积校验（内联之后才算数）──────────────────────────────────────
 const finalBytes = Buffer.byteLength(html, 'utf8');
+let chunks = null;
+
 if (finalBytes > LIMIT) {
-  const lines = report.inlined
+  const sizeLines = report.inlined
     .slice()
     .sort((a, b) => b.rawBytes - a.rawBytes)
     .map((x) => '    ' + fmtPad(x.rawBytes) + '  →  ' +
                  fmtPad(Math.ceil(x.rawBytes * 4 / 3)) + ' (内联后)  ' + x.url);
-  die(
-    '内联图片后超过飞书硬上限：' + finalBytes + 'B > ' + LIMIT + 'B（500KB），超出 ' +
-    ((finalBytes - LIMIT) / 1024).toFixed(0) + 'KB。\n' +
-    '  base64 会让图片膨胀约 1/3，500KB 是平台硬上限、无法绕过。\n' +
-    (lines.length ? '  按体积排序的内联清单（压缩最大的那几张，或改成外链）：\n' + lines.join('\n') : '') +
-    '\n  也可加 --no-inline-images 先发布不含图的版本。'
-  );
+  const over = ((finalBytes - LIMIT) / 1024).toFixed(0);
+
+  if (!splitAt) {
+    die(
+      '超过飞书硬上限：' + finalBytes + 'B > ' + LIMIT + 'B（500KB），超出 ' + over + 'KB。\n' +
+      '  500KB 是【每个 HTML 块】的上限，不是整篇文档的上限。\n' +
+      '  所以你有两条路：\n' +
+      '    ① 减体积：压缩图片 / 改成外链（base64 会让图片膨胀约 1/3）\n' +
+      '    ② 拆成多个块：加 --split-at <标题标签>（如 --split-at h2）\n' +
+      (sizeLines.length ? '  按体积排序的内联清单：\n' + sizeLines.join('\n') + '\n' : '') +
+      '\n  ⚠ 拆块前必须先告诉用户代价：每块都要重背一遍 <head>/CSS/JS（省下的远少于一半），\n' +
+      '     且跨块不共享状态（am 的受众开关会每块各一套，读者要切多次）。'
+    );
+  }
+
+  const r = splitIntoChunks(html, splitAt);
+  if (r.error) {
+    die('按 <' + splitAt + '> 拆分失败：' + r.error + '\n' +
+        '  当前 ' + finalBytes + 'B > ' + LIMIT + 'B，无法自动拆分。请换一个标题层级，或先压缩内容。');
+  }
+  chunks = r.chunks;
+  const sizes = chunks.map((c, i) => ({ no: i + 1, bytes: Buffer.byteLength(c, 'utf8') }));
+  const tooBig = sizes.filter((x) => x.bytes > LIMIT);
+  if (tooBig.length) {
+    die('按 <' + splitAt + '> 拆成 ' + chunks.length + ' 块后仍有块超限：' +
+        tooBig.map((x) => '第' + x.no + '块 ' + x.bytes + 'B').join('、') + '\n' +
+        '  请改用一个更靠上的标题层级（如 --split-at h1），或进一步压缩内容。');
+  }
+  report.split = { at: splitAt, chunks: sizes };
 }
 
 // ── 7. 落盘 ─────────────────────────────────────────────────────────────
 fs.mkdirSync(outDir, { recursive: true });
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const blockPath = path.join(outDir, 'block.html');
+
+const blockFiles = [];
+if (chunks) {
+  chunks.forEach((c, i) => {
+    const name = 'block-' + (i + 1) + '.html';
+    fs.writeFileSync(path.join(outDir, name), c, 'utf8');
+    blockFiles.push(name);
+  });
+} else {
+  fs.writeFileSync(path.join(outDir, 'block.html'), html, 'utf8');
+  blockFiles.push('block.html');
+}
 const docPath = path.join(outDir, 'doc.xml');
-fs.writeFileSync(blockPath, html, 'utf8');
-fs.writeFileSync(docPath, '<title>' + esc(title) + '</title><html5-block path="@./block.html"></html5-block>\n', 'utf8');
+fs.writeFileSync(
+  docPath,
+  '<title>' + esc(title) + '</title>' +
+    blockFiles.map((f) => '<html5-block path="@./' + f + '"></html5-block>').join('') + '\n',
+  'utf8'
+);
+report.docXml = docPath;
+report.blockFiles = blockFiles;
 report.finalBytes = finalBytes;
 report.title = title;
 report.description = description;
@@ -246,11 +288,27 @@ report.docXml = docPath;
 const L = [];
 L.push('html-to-lark 准备完成');
 L.push('  输入      ' + input + '  ' + srcBytes + 'B');
-L.push('  输出 HTML ' + blockPath + '  ' + finalBytes + 'B  （上限 ' + LIMIT + 'B，余 ' + (LIMIT - finalBytes) + 'B）');
+if (chunks) {
+  L.push('  输出 HTML ' + blockFiles.length + ' 块（已按 <' + splitAt + '> 拆分，逐块体积见下）');
+} else {
+  L.push('  输出 HTML ' + path.join(outDir, blockFiles[0]) + '  ' + finalBytes + 'B  （上限 ' + LIMIT + 'B，余 ' + (LIMIT - finalBytes) + 'B）');
+}
 L.push('  文档 XML  ' + docPath);
 L.push('  文档标题  ' + title);
 L.push('  块 alt    ' + description);
 L.push('  高度模式  ' + height);
+
+if (chunks) {
+  L.push('');
+  L.push('⚠ 已按 <' + splitAt + '> 拆成 ' + chunks.length + ' 块 —— 每块是一个独立的 HTML 块：');
+  for (const s of report.split.chunks) {
+    L.push('    block-' + s.no + '.html   ' + fmt(s.bytes) + '   （上限 ' + (LIMIT / 1024) + 'KB）');
+  }
+  L.push('  拆块的代价（发布前必须同步给用户）：');
+  L.push('    1. 每块都重背了一遍 <head>/CSS/JS，总字节数比原页面更大 —— 省下的远少于一半；');
+  L.push('    2. 跨块不共享状态：受众开关等交互会每块各一套，读者要切多次；');
+  L.push('    3. 块与块之间在文档里是可见的分隔，不再是一整页。');
+}
 
 L.push('');
 if (report.inlined.length) {
