@@ -13,14 +13,10 @@
 
 飞书文档支持 HTML 块。所以：**发布 → 把链接甩过去**。
 
-## 演示
-
-一份真实产物（`answer-me-with-html` 生成的《库存盘点系统 · 上手说明》）发布后的效果：
-
-**https://ph4mxp6v4y.feishu.cn/docx/Dc64dGwFDo7q7LxH7idcnJ3ZnuY** ← 第二章整块就是 HTML 块
+## 工作方式
 
 ```
-输入：说明文档.html（单文件，156KB，含样式/脚本/受众开关）
+输入：说明文档.html（单文件，含样式/脚本/交互）
          │
          ├─ prepare.js   校验 → 内联本地图片 → 注入三条 meta → 组装 XML
          │
