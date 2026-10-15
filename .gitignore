@@ -1,3 +1,7 @@
 node_modules/
 .h2l-build/
 *.log
+__probe*
+
+# 需求/工作文档：工作留痕，不属于交付物，不进仓库
+docs/
