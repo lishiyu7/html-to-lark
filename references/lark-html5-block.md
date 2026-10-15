@@ -92,6 +92,25 @@ lark-cli docs +update --doc <URL> --command block_replace --block-id <id> \
 2. 真正会失败的只有**本地相对引用**（块是一段文本，没有同目录文件）。
 3. 境外 CDN 失败属**读者网络可达性**问题，**不是块的沙箱限制** —— 报告文案不可夸大。
 
+### 本地图片怎么办 —— `data:` URI 实测可渲染
+
+| 方案 | 结论 |
+|---|---|
+| **`data:` URI 内联**（base64） | ✅ **实测可渲染**（utf8 SVG 与 canvas 生成的 base64 PNG 均成功）。本 skill 默认走这条 |
+| 外部 URL | ✅ 可加载，但读者网络不通该域名就失败 |
+| 若不动 | ❌ 块内一定加载不到 |
+
+**为什么不能用飞书自己的图片上传**（`docs +media-insert` / `+media-upload --parent-type docx_image`）：
+它们产出的是**给飞书原生图片块用的 `file_token`**，由飞书渲染器解析；HTML 块跑在 iframe 里、
+是一段自包含文本，**拿不到也用不了 token**。二者是不同机制。
+（`D:\tongzhou\tongzhou-operation-skills\skills\lark-publish` 的「成功嵌入图片」正是原生块那条路，
+**不可移植到本场景**——已核实。）
+
+**托管方案（妙搭）为何不选**：`apps` 是**付费产品**（按 AI 额度计费，官方试用页写明「属于付费产品，限时免费试用中」），
+且需 `spark:*` 授权、`+file-sign` 给的是**临时签名 URL**不持久。为「让本地图可见」引入这些不划算。
+
+**代价**：base64 膨胀约 **1/3**，直接受 500KB 上限压制 → 超限时硬失败并列出撑爆体积的图片清单。
+
 ## 五、权限
 
 ```bash

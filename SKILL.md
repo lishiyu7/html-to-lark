@@ -30,14 +30,22 @@ lark-cli auth login --domain docs --domain drive      # 未授权时
 node scripts/prepare.js <输入.html> --out-dir .h2l-build
 ```
 
-产出 `.h2l-build/doc.xml` + `block.html`，并打印报告。脚本承包机械部分：校验（含 500KB 硬上限）、扫描引用、扫描并剥除旧版 chrome、注入三条 meta、标题与 alt 的回落、组装 XML。
+产出 `.h2l-build/doc.xml` + `block.html`，并打印报告。脚本承包机械部分：校验（含 500KB 硬上限）、剥旧版 chrome、**把本地图片内联成 `data:` URI**、扫描剩余引用、注入三条 meta、标题与 alt 的回落、组装 XML。
+
+**本地图片会自动内联**（默认开）—— 因为块只是一段存进 `reference_map` 的文本，
+`./img/x.png` 在块内**一定加载不到**（实测），而 `data:` URI **实测可正常渲染**。
+走 `--no-inline-images` 可关掉，先发不含图的版本。
 
 ### 2 把报告讲给用户（**不要跳过**）
 
 报告里有两类信息必须转述，否则用户会拿到一份坏页面：
 
-- **本地相对引用 N 处** → 块内**一定加载不到**。请用户先处理（内联，或改成可公开访问的 URL）。
+- **内联结果**：内联了哪几张、各多大；**内联失败**的（文件缺失 / 非图片类型）要点名。
+- **其余本地引用**（`./app.js`、`./style.css` 这类）→ 脚本**不自动处理**，只内联图片。请用户手改。
 - **标题 / description 的回落提醒** → `description` 决定块的 `alt`，而 `alt` 是这个块唯一的索引面。
+
+> **体积红线**：base64 会让图片膨胀约 **1/3**，而 500KB 是平台硬上限。
+> 超限时脚本**硬失败**并给出按体积排序的清单，指明是哪几张图撑爆的 —— 让用户去压图或改外链。
 
 ### 3 发布
 
@@ -91,7 +99,8 @@ lark-cli docs +update --doc <文档URL> --command block_replace --block-id <id> 
 | 文档可用宽度 | **≈ 820px** | **所有读者一致**。排版按这个宽度验收 |
 | 三条 meta | `use-iframe` / `html-box-height-mode` / `description` | 必须自己注入；CLI 原样写入、**不校验**，写错了不报错 |
 | `description` → 块的 `alt` | — | 实测坐实。alt 是这个块**唯一的索引面** |
-| 本地相对引用 | **一定加载不到** | 块只是存进 `reference_map` 的一段文本，无托管、无同目录文件 |
+| 本地图片 | **自动内联为 `data:` URI** | 不内联就一定加载不到；`data:` URI 实测可渲染。base64 膨胀约 1/3 |
+| 其余本地引用（js/css） | 一定加载不到、**不自动处理** | 只内联图片；脚本/样式请用户手改，避免改动语义 |
 | 外部 URL | **可以加载** | 实测外部 JS/CSS/图片全通、页面无 CSP。但读者网络不通该域名仍会失败 |
 | 高度模式 | 默认 `auto` | 长页完整展开；单屏类（deck / dashboard）用 `--height viewport` |
 
