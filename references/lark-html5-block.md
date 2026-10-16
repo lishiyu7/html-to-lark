@@ -170,3 +170,39 @@ lark-cli drive permission.public get --token <docx_token> --type docx --as user
    附带发现（**上游问题，未修**）：`write-how-to-use/scripts/clean-am-chrome.js` 瞄准的
    `data-am="reply"` 等**元素**在当前 am 0.5.0 产物中不存在 → 该脚本对其声称支持的版本已是 **no-op**，
    头部注释「在 am 0.5.0 上核实」与实测不符。
+
+## 八、macOS 实测（2026-10）
+
+`SKILL.md` 与 `README.md` 曾写「macOS / Linux 未验证」「`cli.js` 的 CLI 定位是 Windows 特有的」。
+**两条都已作废** —— 本轮在 macOS 上端到端跑通，且 `cli.js` 里的 POSIX 分支本来就已存在（文档滞后于代码）。
+
+**环境**：macOS 15.7.7（arm64 / Apple Silicon）+ Node v23.11.0 + npm 11.17.0 +
+`lark-cli` 1.0.98（`npm i -g @larksuite/cli`，落在 Homebrew 前缀 `/opt/homebrew`）。
+
+| 环节 | 结果 |
+|---|---|
+| `cli.js` 定位 `run.js` | ✅ 命中 `/opt/homebrew/lib/node_modules/@larksuite/cli/scripts/run.js` —— 走 `fromPathShim()` 的 POSIX 分支（shim 在 `bin/`，模块在 `../lib/node_modules/`）。**未设任何环境变量**，`npm root -g` 与写死的 brew 前缀兜底都没用上 |
+| `prepare.js`（正向夹具） | ✅ 3 张本地图片内联为 `data:`（`assets/banner.png` 51013B 走 `<img src>`、`assets/stripe.png` 208B 走 CSS `url()`、`assets/icon.svg` 721B）；源 5,523B → 块 **74,975B**（上限 512,000B）；3 条 meta 就位；`unhandledLocal` 为空。**重跑产物与记录 `cmp` 逐字节一致** |
+| `prepare.js`（反向夹具） | ✅ `assets/does-not-exist.png` 进 `skippedLocal`（原因「文件不存在」），并与 `./app.js` / `./style.css` 一起进 `unhandledLocal`；缺 `description` 时 `warnings` 提醒 `alt` 会回落到标题 |
+| `publish.js` | ✅ 新建成功；`reference_map` 形态为 `{"path": "@doc-fetch-resources/…"}`；回读权限 `link_share_entity=tenant_readable`；`serverWarnings` 为空；漂移指纹落 `~/.html-to-lark/state.json` |
+| `pull.js` | ✅ 拉回内容与发布所用 `block.html` **`cmp` 逐字节一致**（往返无损）；并把「已看过文档当前状态」写回 state.json（`note: "pull（已消化漂移）"`） |
+
+**唯一的坑在环境、不在 skill**：`lark-cli config init` 要把 App Secret 写进 **macOS 钥匙串**，
+并在 `~/Library/Application Support/lark-cli` 建配置目录。Agent 跑在 workspace-write 这类受限沙箱里时，
+`mkdir` 被拒：
+
+```
+keychain Set failed: mkdir /Users/<you>/Library/Application Support/lark-cli: operation not permitted
+```
+
+迷惑之处在于：**扫码那步是成功的（应用已在租户里建出来），只是凭据没落盘**，
+`config show` 仍报 `not_configured`。两条出路：放开文件权限重跑，或
+`lark-cli config init --app-id <id> --app-secret-stdin` 直接绑已有应用。
+给 Agent 用本 skill 时，**提前放开 `~/Library/Application Support/lark-cli` 与钥匙串**比事后补救便宜。
+
+**Linux**：`cli.js` 候选表里已有 `/home/linuxbrew/.linuxbrew/…` 与 `/usr/lib/node_modules/…`，
+但**没跑过就不写「支持」**，仍列为未实测。
+
+> 复现方式：造一个含「本地图片（`<img src>` + CSS `url()`）+ 外链 + 受众开关 JS」的单文件 HTML，
+> 依次跑 `prepare.js` → `publish.js` → `pull.js`，再做 `cmp`；反向用例照 `SKILL.md` 的告警清单核对。
+> 发布用的文档是临时测试文档，租户与链接信息已脱敏，不入库。

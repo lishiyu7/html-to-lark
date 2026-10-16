@@ -105,13 +105,16 @@ node scripts/publish.js .h2l-build --doc <飞书文档URL>
 |---|---|
 | 认证 / 登录态 / 缺 scope / 版本过低 | `lark-cli skills read lark-shared`（**本 skill 不重复官方配置流程**） |
 | html5-block 为什么会这样、实测证据 | [references/lark-html5-block.md](references/lark-html5-block.md) |
-| 脚本到底做了什么 | 直接读 `scripts/*.js` —— 五个文件、无外部依赖、无隐藏步骤（`cli.js` 是共用的 CLI 调用层，`state.js` 是漂移指纹存储） |
+| 脚本到底做了什么 | 直接读 `scripts/*.js` —— 六个文件、无外部依赖、无隐藏步骤（`cli.js` 是共用的 CLI 调用层，`state.js` 是漂移指纹存储） |
 
 **依赖**：`lark-cli` ≥ **1.0.98**（html5-block 在此之前的文档里没有）、Node ≥ 10。
 **不做事前检查** —— 调用失败时报的错就是最好的提示，照着修即可。
 
 ## 验证范围
 
-**Windows 11 + Git Bash + Node v22 + lark-cli 1.0.98** 实测通过。
-**macOS / Linux 未验证**：脚本只用 Node 标准库（理论可跑），但 `publish.js` 的 CLI 定位与
-安装方式（PowerShell junction）是 Windows 特有的，移植前请先测。
+**Windows 11 + Node v22** 和 **macOS 15 (arm64) + Node v23** 均以 lark-cli **1.0.98** 端到端实测通过 ——
+prepare / 反向用例 / publish / pull 往返。macOS 上 `cli.js` 按 POSIX 布局自己找到 `run.js`，**不需要任何环境变量**。
+
+**Linux 未实测**（脚本只用 Node 标准库；`cli.js` 只有 Windows/`cmd` 特判，POSIX 定位与 macOS 同一分支）。
+实测数字，以及 macOS 上唯一的坑（沙箱里凭据写不进钥匙串、配置目录建不起来），
+见 [references/lark-html5-block.md](references/lark-html5-block.md)。

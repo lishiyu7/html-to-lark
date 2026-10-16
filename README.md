@@ -50,6 +50,9 @@ ln -s /path/to/html-to-lark ~/.claude/skills/html-to-lark
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\html-to-lark" -Target "D:\path\to\html-to-lark"
 ```
 
+> 技能根随 Agent 而异：Claude Code 读 `~/.claude/skills`，DSH 读 `~/.dsh/skills`（或 `~/.agents/skills`）。
+> **装进一个不被发现的目录 = 装上了但永远不触发** —— 装完确认技能列表里有它。
+
 ### 依赖
 
 | 依赖 | 版本 | 说明 |
@@ -114,15 +117,43 @@ node scripts/pull.js <文档链接> --out 拉回来的.html
 
 ## 验证范围
 
-**Windows 11 + Git Bash + Node v22 + lark-cli 1.0.98** 实测通过。
-**macOS / Linux 未验证**：脚本本身跨平台（纯 Node 标准库），但 `cli.js` 定位 CLI 的方式
-与安装方式（PowerShell junction）是 Windows 特有的。
+| 环境 | 状态 | 覆盖到哪一步 |
+|---|---|---|
+| Windows 11 + Git Bash + Node v22 + lark-cli 1.0.98 | ✅ 实测通过 | prepare / 超限拆块 / 多块读写 / 权限核查 / 原地更新 |
+| macOS 15 (arm64) + Node v23 + lark-cli 1.0.98 | ✅ 实测通过 | prepare / 反向用例 / publish 新建 / pull 往返 |
+| Linux | ⬜ 未实测 | 脚本只用 Node 标准库；`cli.js` 只有 Windows/`cmd` 特判，POSIX 定位与 macOS 同一分支 |
+
+macOS 那轮的实测数字（同机同输入重跑，产物逐字节一致；**夹具不随仓库分发**）：
+
+| 环节 | 结果 |
+|---|---|
+| `prepare.js` | 3 张本地图片（含 CSS `url()` 里那张）全部内联为 `data:`；块 **74,975B** / 上限 512,000B；3 条 meta 就位；无残留本地引用。重跑产物与记录**逐字节一致** |
+| 反向用例 | 缺图 / `./app.js` / `./style.css` 三类都被点名；`description` 缺失也会提醒 |
+| `publish.js` | 新建成功；回读分享范围 `tenant_readable`（组织内获得链接的人可阅读）；**服务端无提醒** |
+| `pull.js` | 拉回的块与 `block.html` 用 `cmp` 比对**逐字节一致** → 往返无损 |
+
+`cli.js` 定位 `run.js` **不是 Windows 特有**：除 `lark-cli.cmd` 外，它还会按 POSIX 布局
+（shim 在 `bin/`、模块在 `../lib/node_modules/`）和 brew / nvm 的常见前缀依次查找。
+macOS 这次命中的就是 Homebrew 的 `bin` → `../lib/node_modules` 这条，**无需任何环境变量**。
+
+### macOS 上唯一会卡住的地方：凭据落盘
+
+`lark-cli` 把 App Secret 存进 **macOS 钥匙串**，同时要在 `~/Library/Application Support/lark-cli`
+建配置目录。Agent 跑在只能写工作目录的沙箱里时，这一步会失败，形如：
+
+```
+keychain Set failed: mkdir /Users/<you>/Library/Application Support/lark-cli: operation not permitted
+```
+
+此时**应用其实已经在租户里建出来了，但本地没留下凭据** —— 扫码那步的成功反而会误导人。
+出路两条：放开文件权限重跑，或用 `lark-cli config init --app-id <id> --app-secret-stdin`
+把已有应用绑上。这是沙箱环境的事，不是 skill 的事。
 
 ## 文档
 
 - [SKILL.md](SKILL.md) — 完整流程、超限拆块、漂移守卫
 - [references/lark-html5-block.md](references/lark-html5-block.md) — 全部实测事实与证据
-  （含本项目几次误判的复盘，以及一个上游 skill 的问题）
+  （含 macOS 端到端实测、本项目几次误判的复盘，以及一个上游 skill 的问题）
 
 ## License
 
