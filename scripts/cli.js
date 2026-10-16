@@ -14,14 +14,20 @@ const { spawnSync } = require('child_process');
 
 const REL = path.join('node_modules', '@larksuite', 'cli', 'scripts', 'run.js');
 
-// PATH 里的 lark-cli shim 与 node_modules 同级 → 反推真实入口
+// 从 PATH 里的 lark-cli shim 反推真实入口。
+// 两种布局都要覆盖：
+//   Windows / node_global：<bin>/node_modules/...
+//   POSIX（brew / nvm / 系统包）：shim 在 bin/，模块在 ../lib/node_modules/...
+// 只按「同级」找会在 macOS 上失配。
 function fromPathShim() {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const d of dirs) {
     for (const name of ['lark-cli.cmd', 'lark-cli', 'lark-cli.ps1', 'lark-cli.exe']) {
       if (!fs.existsSync(path.join(d, name))) continue;
-      const cand = path.join(d, REL);
-      if (fs.existsSync(cand)) return cand;
+      for (const rel of [REL, path.join('..', 'lib', REL)]) {
+        const cand = path.join(d, rel);
+        if (fs.existsSync(cand)) return cand;
+      }
     }
   }
   return null;
@@ -42,18 +48,20 @@ function fromNpmRoot() {
   return null;
 }
 
-// 注意：不能假设 run.js 在 node 旁边 —— nvm 下 node 在 C:\nvm4w，
-// 而 CLI 可能装在 D:\Software\nodejs\node_global（实测踩过）。
+// 注意：不能假设 run.js 在 node 旁边 —— 用 nvm 时 node 与全局模块根
+// 可能分处不同前缀（实测踩过：两者不在同一棵树里）。
 function resolveRunJs() {
   if (process.env.LARK_RUNJS && fs.existsSync(process.env.LARK_RUNJS)) return process.env.LARK_RUNJS;
   const nodeDir = path.dirname(process.execPath);
   const cands = [
     fromPathShim(),
-    path.join(nodeDir, 'node_global', REL),
-    path.join(nodeDir, REL),
-    path.join(nodeDir, '..', 'lib', REL),
-    '/usr/local/lib/node_modules/@larksuite/cli/scripts/run.js',
+    path.join(nodeDir, 'node_global', REL),   // Windows nvm / node_global 布局
+    path.join(nodeDir, REL),                  // node 就装在全局根里
+    path.join(nodeDir, '..', 'lib', REL),     // nvm / brew / 系统包
+    '/opt/homebrew/lib/node_modules/@larksuite/cli/scripts/run.js',          // Apple Silicon brew
+    '/usr/local/lib/node_modules/@larksuite/cli/scripts/run.js',             // Intel brew / 安装包
     '/usr/lib/node_modules/@larksuite/cli/scripts/run.js',
+    '/home/linuxbrew/.linuxbrew/lib/node_modules/@larksuite/cli/scripts/run.js',
     fromNpmRoot(),
   ].filter(Boolean);
   for (const c of cands) if (fs.existsSync(c)) return c;

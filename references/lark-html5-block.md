@@ -120,8 +120,8 @@ lark-cli docs +update --doc <URL> --command block_replace --block-id <id> \
 **为什么不能用飞书自己的图片上传**（`docs +media-insert` / `+media-upload --parent-type docx_image`）：
 它们产出的是**给飞书原生图片块用的 `file_token`**，由飞书渲染器解析；HTML 块跑在 iframe 里、
 是一段自包含文本，**拿不到也用不了 token**。二者是不同机制。
-（`D:\tongzhou\tongzhou-operation-skills\skills\lark-publish` 的「成功嵌入图片」正是原生块那条路，
-**不可移植到本场景**——已核实。）
+（已核实：另一套内部发布 skill 的「成功嵌入图片」走的正是原生块那条路，
+**不可移植到本场景**。）
 
 **托管方案（妙搭）为何不选**：`apps` 是**付费产品**（按 AI 额度计费，官方试用页写明「属于付费产品，限时免费试用中」），
 且需 `spark:*` 授权、`+file-sign` 给的是**临时签名 URL**不持久。为「让本地图可见」引入这些不划算。
